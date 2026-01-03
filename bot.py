@@ -8,7 +8,7 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 from database import (
     init_database, log_user, log_command, log_message,
-    get_daily_stats, get_message_counts, get_top_chatter
+    get_daily_stats, get_message_counts, get_top_chatter, start_flush_loop
 )
 from charts import generate_stats_chart
 
@@ -141,16 +141,21 @@ def main():
     init_database()
     
     token = "token"
-    application = Application.builder().token(token).build()
+    application = Application.builder().token(token).build()   
+    application.add_handler(PrefixHandler(["/", ","], "help", help_command))
+    application.add_handler(PrefixHandler(["/", ","], "stats", stats_command))
+    
     application.add_handler(MessageHandler(
         filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL,
         track_message
     ), group=1)
     
-    application.add_handler(PrefixHandler(["/", ","], "help", help_command))
-    application.add_handler(PrefixHandler(["/", ","], "stats", stats_command))
-    
     application.add_handler(CallbackQueryHandler(graph_callback))
+    
+    async def post_init(application):
+        await start_flush_loop()
+    
+    application.post_init = post_init
     
     logger.info("Starting...")
     application.run_polling(
