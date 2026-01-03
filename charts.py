@@ -20,7 +20,7 @@ def generate_stats_chart(
     fig, ax = plt.subplots(figsize=(10, 5))
     
     if dates:
-        ax.plot(dates, messages, color='#2196F3', linewidth=2, marker='o', markersize=6)
+        ax.plot(dates, messages, color='#e53935', linewidth=2, marker='o', markersize=6)
         
         ax.set_ylabel('Messages', fontsize=11)
         ax.set_xlabel('Date', fontsize=11)
