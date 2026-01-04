@@ -2,9 +2,9 @@ import os
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import (
-    Application, ContextTypes, PrefixHandler,
-    MessageHandler, CallbackQueryHandler, filters
+    Application, ContextTypes, MessageHandler, CallbackQueryHandler, filters, TypeHandler
 )
+import re
 from telegram.constants import ParseMode
 from database import (
     init_database, log_user, log_command, log_message,
@@ -36,18 +36,54 @@ def get_graph_keyboard(selected: str = 'graph_7d') -> InlineKeyboardMarkup:
         buttons.append(InlineKeyboardButton(short_label, callback_data=key))
     return InlineKeyboardMarkup([buttons])
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+def parse_command(text: str) -> tuple:
+    if not text:
+        return None, []
+    match = re.match(r'^[/,](\w+)(?:\s+(.*))?$', text)
+    if match:
+        cmd = match.group(1).lower()
+        args = match.group(2).split() if match.group(2) else []
+        return cmd, args
+    return None, []
+
+async def log_all_updates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message and update.message.text:
+        logger.info(f"RAW UPDATE: chat={update.effective_chat.id if update.effective_chat else 'N/A'} text='{update.message.text}'")
+    elif update.message:
+        logger.info(f"RAW UPDATE: non-text message type")
+
+async def command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.message.text:
+        return
+    
+    text = update.message.text.strip()
+    logger.info(f"command_handler received: '{text}'")
+    
+    if not text.startswith('/') and not text.startswith(','):
+        logger.info(f"Text does not start with / or ,: '{text[:10]}'")
+        return
+    
+    cmd, args = parse_command(text)
+    logger.info(f"Parsed command: cmd='{cmd}', args={args}")
+    
+    if not cmd:
+        return
+    
     user = update.effective_user
     log_user(user.id, user.username, user.first_name, user.last_name)
-    log_command(user.id, "help")
     
-    help_text = (
-        "<b>Commands:</b>\n"
-        "<code>/stats</code> or <code>,stats</code> - View message statistics\n"
-        "<code>/stats graph</code> or <code>,stats graph</code> - View message trend graph"
-    )
+    if cmd == 'help':
+        log_command(user.id, "help")
+        help_text = (
+            "<b>Commands:</b>\n"
+            "<code>/stats</code> or <code>,stats</code> - View message statistics\n"
+            "<code>/stats graph</code> or <code>,stats graph</code> - View message trend graph"
+        )
+        await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
     
-    await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
+    elif cmd == 'stats':
+        log_command(user.id, "stats")
+        await handle_stats(update, args)
 
 async def track_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message and update.effective_user and update.effective_chat:
@@ -58,14 +94,8 @@ async def track_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             log_user(user.id, user.username, user.first_name, user.last_name)
             log_message(user.id, chat.id)
 
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
+async def handle_stats(update: Update, args: list) -> None:
     chat = update.effective_chat
-    
-    log_user(user.id, user.username, user.first_name, user.last_name)
-    log_command(user.id, "stats")
-    
-    args = context.args if context.args else []
     
     if args and args[0].lower() == 'graph':
         await send_graph(update.message, chat.id, 'graph_7d')
@@ -140,10 +170,17 @@ async def graph_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 def main():
     init_database()
     
-    token = "token"
-    application = Application.builder().token(token).build()   
-    application.add_handler(PrefixHandler(["/", ","], "help", help_command))
-    application.add_handler(PrefixHandler(["/", ","], "stats", stats_command))
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not token:
+        logger.error("TELEGRAM_BOT_TOKEN environment variable not set")
+        return
+    
+    application = Application.builder().token(token).build()
+    application.add_handler(TypeHandler(Update, log_all_updates), group=-1)
+    application.add_handler(MessageHandler(
+        filters.TEXT,
+        command_handler
+    ))
     
     application.add_handler(MessageHandler(
         filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL,
